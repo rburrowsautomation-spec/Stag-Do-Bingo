@@ -148,9 +148,17 @@
   }
   .gal-square h3 span{color:var(--accent)}
   .gal-media{display:grid; grid-template-columns:repeat(3,1fr); gap:6px}
+  .gal-tile{position:relative}
   .gal-media img, .gal-media video{
     width:100%; aspect-ratio:1; object-fit:cover;
     border-radius:8px; background:#000; display:block;
+  }
+  .gal-del{
+    position:absolute; top:5px; right:5px;
+    width:30px; height:30px; border:none; border-radius:8px;
+    background:rgba(180,30,50,.92); color:#fff; font-size:14px; cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+    box-shadow:0 1px 4px rgba(0,0,0,.4);
   }
   .gal-empty{color:rgba(244,246,249,.75); font-size:15px; padding:24px 8px; text-align:center}
 
@@ -338,8 +346,8 @@
 <script type="module">
 /* ================= CONFIG — the only hardcoded bit ================= */
 const CONFIG = {
-  SUPABASE_URL: "https://knwuzbtvatwcwxgjaeil.supabase.co",        // e.g. "https://abcdefgh.supabase.co"
-  SUPABASE_ANON_KEY: "sb_publishable_00xbWKZs7goNnwq308GRjQ_LIRec_qw",   // anon public key (safe to publish)
+  SUPABASE_URL: "",        // e.g. "https://abcdefgh.supabase.co"
+  SUPABASE_ANON_KEY: "",   // anon public key (safe to publish)
   BUCKET: "stag-evidence",
   MAX_FILE_MB: 50,
 };
@@ -551,15 +559,26 @@ function renderGallery() {
     const grid = document.createElement("div");
     grid.className = "gal-media";
     media.forEach(m => {
+      const tile = document.createElement("div");
+      tile.className = "gal-tile";
       if (m.media_type === "video") {
         const v = document.createElement("video");
         v.src = m.url; v.controls = true; v.playsInline = true; v.preload = "metadata";
-        grid.appendChild(v);
+        tile.appendChild(v);
       } else {
         const img = document.createElement("img");
         img.src = m.url; img.loading = "lazy"; img.alt = heading;
-        grid.appendChild(img);
+        tile.appendChild(img);
       }
+      if (adminPwd && m.id) {   // delete only shows when Inner Circle is unlocked
+        const del = document.createElement("button");
+        del.className = "gal-del";
+        del.innerHTML = "&#128465;";
+        del.title = "Delete this evidence";
+        del.addEventListener("click", (e) => { e.stopPropagation(); deleteEvidence(m); });
+        tile.appendChild(del);
+      }
+      grid.appendChild(tile);
     });
     wrap.appendChild(grid);
     g.appendChild(wrap);
@@ -570,6 +589,22 @@ function renderGallery() {
     if (b.challenge) addSection("Bonus — " + b.challenge, b.done, evidenceFor({ line_key: l.key }));
   });
   if (!any) g.innerHTML = `<p class="gal-empty">No evidence yet. Get dabbing.</p>`;
+}
+
+async function deleteEvidence(m) {
+  if (!adminPwd) { toast("Unlock Inner Circle to delete"); return; }
+  if (!confirm("Delete this evidence for good?")) return;
+  if (!supabase) {
+    demoMedia = demoMedia.filter(x => x !== m);
+    render();
+    toast("Deleted (demo)");
+    return;
+  }
+  const { data: path, error } = await supabase.rpc("delete_evidence", { pwd: adminPwd, ev_id: m.id });
+  if (error || !path) { toast("Delete failed — are you still unlocked?"); return; }
+  await supabase.storage.from(CONFIG.BUCKET).remove([path]);  // remove the actual file
+  await loadAll();
+  toast("Evidence deleted");
 }
 
 /* ---------- celebrations & bonus popups ---------- */
@@ -793,6 +828,7 @@ function renderAdmin() {
         adminPwd = pwd;
         startDraft();
         renderAdmin();
+        renderGallery();   // show delete buttons right away
         toast("Welcome to the Inner Circle");
       } else {
         renderAdmin();
@@ -883,7 +919,7 @@ function renderAdmin() {
     toast("Password changed");
   });
   $("btnSave").addEventListener("click", saveSetup);
-  $("btnLock").addEventListener("click", () => { adminPwd = null; draft = null; renderAdmin(); });
+  $("btnLock").addEventListener("click", () => { adminPwd = null; draft = null; renderAdmin(); renderGallery(); });
 }
 
 $("photoInput").addEventListener("change", async (e) => {
