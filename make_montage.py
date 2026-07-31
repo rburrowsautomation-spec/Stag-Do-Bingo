@@ -77,6 +77,13 @@ def run(cmd):
     subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 
+def run_capture(cmd):
+    """Like run() but on failure the CalledProcessError carries stderr."""
+    p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if p.returncode != 0:
+        raise subprocess.CalledProcessError(p.returncode, cmd, p.stdout, p.stderr)
+
+
 def probe_duration(src):
     out = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
@@ -90,18 +97,17 @@ def probe_duration(src):
 
 def caption_card(text, out, seconds=2.5):
     """A dark card with the challenge text, matched to the video size."""
-    safe = text.replace(":", "\\:").replace("'", "\u2019")
-    wrapped = "\n".join(textwrap.wrap(safe, width=24)) or " "
-    # write text to a file so odd characters don't break the command
+    # wrap tight enough to fit the portrait width with margins
+    wrapped = "\n".join(textwrap.wrap(text, width=16)) or " "
     tf = WORK / "cap.txt"
     tf.write_text(wrapped, encoding="utf-8")
-    run([
+    run_capture([
         "ffmpeg", "-y",
         "-f", "lavfi", "-i", f"color=c=0x121E33:s={TARGET_W}x{TARGET_H}:d={seconds}:r={FPS}",
         "-vf",
         (f"drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:"
-         f"textfile={tf}:fontcolor=0xF4F6F9:fontsize=54:x=(w-text_w)/2:y=(h-text_h)/2:"
-         f"line_spacing=14:box=1:boxcolor=0x121E33@0.0"),
+         f"textfile={tf}:fontcolor=0xF4F6F9:fontsize=48:"
+         f"x=(w-text_w)/2:y=(h-text_h)/2:line_spacing=16"),
         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-t", str(seconds),
         str(out),
     ])
@@ -109,20 +115,21 @@ def caption_card(text, out, seconds=2.5):
 
 def normalise_image(src, out, seconds=3.0):
     """Still photo -> a few seconds of silent video at target size."""
-    run([
-        "ffmpeg", "-y", "-loop", "1", "-i", str(src),
+    run_capture([
+        "ffmpeg", "-y",
+        "-loop", "1", "-t", str(seconds), "-i", str(src),
+        "-f", "lavfi", "-t", str(seconds), "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
         "-vf", (f"scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=decrease,"
-                f"pad={TARGET_W}:{TARGET_H}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1"),
-        "-c:v", "libx264", "-t", str(seconds), "-pix_fmt", "yuv420p", "-r", str(FPS),
-        "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
-        "-shortest", "-c:a", "aac",
-        str(out),
+                f"pad={TARGET_W}:{TARGET_H}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps={FPS}"),
+        "-c:v", "libx264", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "128k", "-ac", "2", "-ar", "44100",
+        "-shortest", str(out),
     ])
 
 
 def normalise_video(src, out, clip_len):
     """Video -> trimmed, compressed, target size, with audio."""
-    run([
+    run_capture([
         "ffmpeg", "-y", "-i", str(src), "-t", str(clip_len),
         "-vf", (f"scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=decrease,"
                 f"pad={TARGET_W}:{TARGET_H}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1"),
@@ -139,7 +146,7 @@ def normalise_video_safe(src, out, clip_len):
         normalise_video(src, out, clip_len)
     except subprocess.CalledProcessError:
         # add a silent track then retry (covers clips with no audio stream)
-        run([
+        run_capture([
             "ffmpeg", "-y", "-i", str(src),
             "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
             "-t", str(clip_len),
@@ -211,7 +218,9 @@ def main():
                 normalise_image(src, seg, seconds=PHOTO_SECS)
             segments.append(seg)
         except subprocess.CalledProcessError as ex:
-            print(f"  ! ffmpeg failed on this item, skipping")
+            err = (ex.stderr or b"").decode(errors="replace")[-500:]
+            print(f"  ! ffmpeg failed on this item ({e['media_type']}), skipping.")
+            print(f"    reason: {err}")
             continue
 
     # closing card
@@ -224,7 +233,7 @@ def main():
     listfile = WORK / "concat.txt"
     listfile.write_text("".join(f"file '{s.resolve()}'\n" for s in segments), encoding="utf-8")
     out = WORK / "stag-montage.mp4"
-    run([
+    run_capture([
         "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(listfile),
         "-c:v", "libx264", "-crf", "24", "-preset", "medium", "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "128k", str(out),
@@ -238,3 +247,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+          
