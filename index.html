@@ -1,0 +1,1095 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Stag Do Bingo</title>
+<!--
+  STAG DO BINGO v2 — one shared card, evidence uploads, bonus rounds,
+  and a password-protected Inner Circle tab for setup.
+
+  Nothing event-specific is hardcoded any more: stag name, challenges,
+  challenge order, background photo and bonus rounds all live in the
+  database and are edited from the Inner Circle tab.
+
+  SETUP (once per stag do):
+  1. Create a free project at supabase.com
+  2. Edit the admin password in setup.sql, then run it in the SQL editor
+  3. Paste your project URL + anon public key into CONFIG below
+  4. Host this file anywhere static (GitHub Pages works great)
+  5. Open the page, go to Inner Circle, unlock, and set everything up
+
+  With no keys set, the page runs in DEMO MODE (password: demo, nothing persists).
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Alfa+Slab+One&family=Outfit:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    /* wedding party colours: navy + light grey */
+    --bg:#121E33;
+    --bg-deep:#0A1322;
+    --paper:#F4F6F9;
+    --ink:#16233A;
+    --dab:#1D3557;
+    --accent:#C7CFDA;
+    --accent-strong:#4A6FA5;
+    --muted:#6B7688;
+    --radius:14px;
+    --display:'Alfa Slab One', 'Arial Black', sans-serif;
+    --body:'Outfit', system-ui, sans-serif;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
+  html,body{margin:0; padding:0}
+  body{
+    background:var(--bg);
+    background-image:radial-gradient(circle at 50% -10%, #1C2E4E 0%, var(--bg) 55%, var(--bg-deep) 100%);
+    background-size:cover; background-position:center; background-attachment:fixed;
+    color:var(--paper);
+    font-family:var(--body);
+    min-height:100dvh;
+    padding-bottom:calc(76px + env(safe-area-inset-bottom));
+  }
+  header{text-align:center; padding:22px 16px 10px}
+  .eyebrow{
+    font-size:12px; letter-spacing:.22em; text-transform:uppercase;
+    color:var(--accent); font-weight:800; margin:0 0 4px;
+  }
+  h1{
+    font-family:var(--display);
+    font-size:clamp(30px, 9vw, 44px);
+    margin:0; line-height:1.05;
+    text-shadow:0 3px 0 rgba(0,0,0,.45);
+    letter-spacing:.01em;
+  }
+  .stats{
+    margin:10px auto 0;
+    display:inline-flex; gap:14px;
+    font-weight:600; font-size:14px;
+    background:rgba(6,12,24,.55);
+    border-radius:999px; padding:6px 16px;
+  }
+  .stats b{color:var(--accent)}
+  #bonusChip{
+    display:none; margin:10px auto 0;
+    font-family:var(--body); font-weight:800; font-size:14px;
+    background:var(--accent); color:var(--ink);
+    border:none; border-radius:999px; padding:9px 18px; cursor:pointer;
+    animation:pulse 1.6s ease-in-out infinite;
+  }
+  #bonusChip.show{display:inline-block}
+  @keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.05)}}
+
+  /* ---------- card ---------- */
+  main{max-width:520px; margin:0 auto; padding:8px 12px}
+  .board{
+    display:grid;
+    grid-template-columns:repeat(4, 1fr);
+    gap:8px;
+    background:var(--paper);
+    border-radius:var(--radius);
+    padding:10px;
+    box-shadow:0 10px 30px rgba(0,0,0,.5), inset 0 0 0 2px rgba(22,35,58,.15);
+  }
+  .cell{
+    position:relative;
+    aspect-ratio:1/1.05;
+    background:#fff;
+    border:1.5px solid rgba(22,35,58,.22);
+    border-radius:9px;
+    color:var(--ink);
+    font-family:var(--body);
+    font-weight:600;
+    font-size:clamp(10px, 2.9vw, 13px);
+    line-height:1.2;
+    padding:6px 5px 16px;
+    display:flex; align-items:center; justify-content:center;
+    text-align:center;
+    cursor:pointer;
+    user-select:none;
+    overflow:hidden;
+  }
+  .cell:active{transform:scale(.97)}
+  .cell .label{position:relative; z-index:1}
+  .cell.done .label{z-index:3; color:#fff; text-shadow:0 1px 2px rgba(0,0,0,.5)}
+  .cell .clipcount{
+    position:absolute; bottom:4px; right:6px;
+    font-size:10px; font-weight:800; color:var(--muted);
+    display:flex; align-items:center; gap:2px; z-index:1;
+  }
+  .cell.done .clipcount{color:#fff; z-index:3; text-shadow:0 1px 2px rgba(0,0,0,.5)}
+  /* the dab stamp */
+  .dab{
+    position:absolute; inset:6%;
+    background:var(--dab);
+    opacity:.85;
+    border-radius:45% 55% 52% 48% / 50% 46% 54% 50%;
+    z-index:2;
+    animation:dabIn .35s cubic-bezier(.2,1.6,.4,1) both;
+    pointer-events:none;
+  }
+  @keyframes dabIn{
+    0%{transform:scale(2.4) rotate(0deg); opacity:0}
+    60%{opacity:.92}
+    100%{transform:scale(1) rotate(var(--rot,0deg)); opacity:.85}
+  }
+  @media (prefers-reduced-motion: reduce){
+    .dab{animation:none; transform:rotate(var(--rot,0deg))}
+    .cell:active{transform:none}
+    #bonusChip{animation:none}
+  }
+
+  /* ---------- gallery ---------- */
+  #gallery{padding:4px 2px}
+  .gal-square{margin:0 0 22px}
+  /* hangover tab */
+  #hangover{padding:4px 2px}
+  .hang-block{
+    background:rgba(6,12,24,.4); border-radius:var(--radius);
+    padding:16px; margin:0 0 16px;
+  }
+  .hang-h{
+    font-family:var(--display); font-weight:400; font-size:18px;
+    margin:0 0 12px; color:var(--paper);
+  }
+  .hang-video{width:100%; border-radius:10px; background:#000; display:block}
+  .hang-empty{color:rgba(244,246,249,.75); font-size:15px; margin:0}
+  .hang-grid{display:grid; grid-template-columns:repeat(3,1fr); gap:6px}
+  .hang-tile{position:relative; display:block; border-radius:8px; overflow:hidden; background:#000}
+  .hang-tile img, .hang-vid{width:100%; aspect-ratio:1; object-fit:cover; display:block}
+  .hang-vid{display:flex; align-items:center; justify-content:center; font-size:26px; background:var(--ink)}
+  .hang-dl{
+    position:absolute; bottom:5px; right:5px;
+    width:26px; height:26px; border-radius:7px;
+    background:rgba(6,12,24,.75); color:#fff; font-size:13px;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .gal-square h3{
+    font-family:var(--display); font-weight:400;
+    font-size:16px; margin:0 0 8px; color:var(--paper);
+  }
+  .gal-square h3 span{color:var(--accent)}
+  .gal-media{display:grid; grid-template-columns:repeat(3,1fr); gap:6px}
+  .gal-tile{position:relative}
+  .gal-media img, .gal-media video{
+    width:100%; aspect-ratio:1; object-fit:cover;
+    border-radius:8px; background:#000; display:block;
+  }
+  .gal-del{
+    position:absolute; top:5px; right:5px;
+    width:30px; height:30px; border:none; border-radius:8px;
+    background:rgba(180,30,50,.92); color:#fff; font-size:14px; cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+    box-shadow:0 1px 4px rgba(0,0,0,.4);
+  }
+  .gal-empty{color:rgba(244,246,249,.75); font-size:15px; padding:24px 8px; text-align:center}
+
+  /* ---------- inner circle (admin) ---------- */
+  #admin{padding:4px 2px}
+  .panel{
+    background:var(--paper); color:var(--ink);
+    border-radius:var(--radius); padding:16px; margin:0 0 14px;
+  }
+  .panel h3{
+    font-family:var(--display); font-weight:400; font-size:17px;
+    margin:0 0 12px;
+  }
+  .panel label{display:block; font-size:12px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); margin:10px 0 4px}
+  .panel input[type=text], .panel input[type=password]{
+    width:100%; font-family:var(--body); font-size:16px; font-weight:600;
+    padding:11px 12px; border:1.5px solid rgba(22,35,58,.25); border-radius:9px;
+    background:#fff; color:var(--ink);
+  }
+  .panel input:focus{outline:2px solid var(--accent-strong); outline-offset:1px}
+  .actrow{display:flex; gap:6px; align-items:center; margin:0 0 6px}
+  .actrow .pos{width:22px; text-align:right; font-size:12px; font-weight:800; color:var(--muted); flex:none}
+  .actrow input{flex:1; min-width:0}
+  .arrow{
+    flex:none; width:38px; height:42px; border:none; border-radius:8px;
+    background:rgba(22,35,58,.08); color:var(--ink); font-size:16px; cursor:pointer;
+  }
+  .arrow:disabled{opacity:.3}
+  .bonusrow{margin:0 0 10px}
+  .bonusrow .linelabel{font-size:13px; font-weight:800; margin:0 0 3px}
+  .hint{font-size:13px; color:var(--muted); margin:6px 0 0}
+  .photoPreview{
+    width:100%; max-height:160px; object-fit:cover; border-radius:9px;
+    margin:8px 0 0; display:none;
+  }
+  .photoPreview.show{display:block}
+
+  /* ---------- footer nav ---------- */
+  footer{
+    position:fixed; bottom:0; left:0; right:0; z-index:5;
+    display:flex; gap:6px; justify-content:center;
+    padding:10px 10px calc(10px + env(safe-area-inset-bottom));
+    background:linear-gradient(to top, var(--bg-deep) 65%, transparent);
+  }
+  .navbtn{
+    font-family:var(--body); font-weight:800; font-size:14px;
+    border:none; border-radius:999px;
+    padding:12px 16px; cursor:pointer;
+    background:rgba(244,246,249,.14); color:var(--paper);
+    white-space:nowrap;
+  }
+  .navbtn.active{background:var(--accent); color:var(--ink)}
+  .navbtn.small{padding:12px 14px}
+
+  /* ---------- sheets & modals ---------- */
+  #overlay{
+    position:fixed; inset:0; background:rgba(4,9,18,.6);
+    opacity:0; pointer-events:none; transition:opacity .2s; z-index:10;
+  }
+  #overlay.open{opacity:1; pointer-events:auto}
+  .sheet{
+    position:fixed; left:0; right:0; bottom:0; z-index:11;
+    background:var(--paper); color:var(--ink);
+    border-radius:20px 20px 0 0;
+    padding:18px 18px calc(20px + env(safe-area-inset-bottom));
+    transform:translateY(105%); transition:transform .25s cubic-bezier(.3,1.2,.4,1);
+    max-height:85dvh; overflow-y:auto;
+  }
+  .sheet.open{transform:translateY(0)}
+  @media (prefers-reduced-motion: reduce){
+    .sheet{transition:none} #overlay{transition:none}
+  }
+  .sheet-eyebrow{font-size:11px; letter-spacing:.2em; text-transform:uppercase; color:var(--muted); font-weight:800; margin:0 0 4px}
+  .sheet-title{font-family:var(--display); font-weight:400; font-size:22px; line-height:1.2; margin:0 0 16px}
+  .bigbtn{
+    display:block; width:100%;
+    font-family:var(--body); font-weight:800; font-size:17px;
+    border:none; border-radius:12px; padding:15px; cursor:pointer; margin:0 0 10px;
+  }
+  .bigbtn.primary{background:var(--dab); color:#fff}
+  .bigbtn.outline{background:#fff; color:var(--dab); border:2px solid var(--dab)}
+  .bigbtn.dark{background:var(--ink); color:var(--paper)}
+  .bigbtn.quiet{background:rgba(22,35,58,.08); color:var(--ink)}
+  .sheet-thumbs{display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin-top:12px}
+  .sheet-thumbs img{width:100%; aspect-ratio:1; object-fit:cover; border-radius:8px; display:block}
+  .vidtile{
+    aspect-ratio:1; border-radius:8px; background:var(--ink); color:var(--paper);
+    display:flex; align-items:center; justify-content:center; font-size:22px;
+  }
+  .sheet-note{font-size:13px; color:var(--muted); margin:10px 0 0}
+  .hiddenInput{display:none}
+
+  /* ---------- toast, banner, takeovers ---------- */
+  #toast{
+    position:fixed; left:50%; bottom:96px; transform:translateX(-50%) translateY(20px);
+    background:var(--ink); color:var(--paper);
+    padding:10px 18px; border-radius:999px; font-weight:600; font-size:14px;
+    opacity:0; transition:.25s; pointer-events:none; z-index:40; white-space:nowrap;
+    max-width:92vw; text-overflow:ellipsis; overflow:hidden;
+  }
+  #toast.show{opacity:1; transform:translateX(-50%) translateY(0)}
+  #demoBanner{
+    background:var(--accent); color:var(--ink);
+    text-align:center; font-weight:800; font-size:13px; padding:7px 12px;
+  }
+  .takeover{
+    position:fixed; inset:0; z-index:30; display:none;
+    align-items:center; justify-content:center; text-align:center;
+    background:rgba(8,15,28,.92); padding:24px;
+  }
+  .takeover.show{display:flex}
+  .takeover h2{
+    font-family:var(--display); font-weight:400; color:var(--accent);
+    font-size:clamp(36px, 12vw, 64px); margin:0 0 8px; line-height:1;
+    text-shadow:0 4px 0 rgba(0,0,0,.45);
+  }
+  .takeover p{font-size:18px; font-weight:600; margin:0 0 22px; color:var(--paper)}
+  .takeover .inner{max-width:460px; width:100%}
+  .spinner{display:inline-block; width:16px; height:16px; border:2px solid rgba(255,255,255,.4); border-top-color:#fff; border-radius:50%; animation:spin .7s linear infinite; vertical-align:-3px; margin-right:6px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+
+<div id="demoBanner" hidden>DEMO MODE — nothing is saved. Inner Circle password: demo</div>
+
+<header>
+  <p class="eyebrow" id="stagName"></p>
+  <h1 id="eventName"></h1>
+  <div class="stats">
+    <span>Squares <b id="statSquares">0/16</b></span>
+    <span>Lines <b id="statLines">0/8</b></span>
+  </div>
+  <div><button id="bonusChip">&#9889; Bonus round pending</button></div>
+</header>
+
+<main>
+  <div id="board" class="board" aria-label="Bingo card"></div>
+  <section id="gallery" hidden></section>
+  <section id="hangover" hidden></section>
+  <section id="admin" hidden></section>
+</main>
+
+<footer>
+  <button class="navbtn active" id="navCard">Card</button>
+  <button class="navbtn" id="navGallery">Evidence</button>
+  <button class="navbtn" id="navHangover">&#127866; Hangover</button>
+  <button class="navbtn" id="navAdmin">&#128274; Inner Circle</button>
+  <button class="navbtn small" id="navRefresh" title="Refresh">&#8635;</button>
+</footer>
+
+<div id="overlay"></div>
+
+<!-- square sheet -->
+<div class="sheet" id="squareSheet" role="dialog" aria-modal="true">
+  <p class="sheet-eyebrow" id="sqEyebrow"></p>
+  <h2 class="sheet-title" id="sqTitle"></h2>
+  <button class="bigbtn primary" id="btnSqDone"></button>
+  <button class="bigbtn dark" id="btnSqUpload">Add photo or video</button>
+  <div class="sheet-thumbs" id="sqThumbs"></div>
+  <p class="sheet-note">Anything uploaded here is visible to the whole group.</p>
+</div>
+
+<!-- bonus sheet -->
+<div class="sheet" id="bonusSheet" role="dialog" aria-modal="true">
+  <p class="sheet-eyebrow" id="boEyebrow"></p>
+  <h2 class="sheet-title" id="boTitle"></h2>
+  <button class="bigbtn primary" id="btnBoDone"></button>
+  <button class="bigbtn dark" id="btnBoUpload">Add evidence (optional)</button>
+  <button class="bigbtn quiet" id="btnBoLater">Later</button>
+  <div class="sheet-thumbs" id="boThumbs"></div>
+</div>
+
+<input type="file" id="fileInput" class="hiddenInput" accept="image/*,video/*" multiple>
+<input type="file" id="photoInput" class="hiddenInput" accept="image/*">
+
+<div id="toast"></div>
+
+<div class="takeover" id="fullhouse">
+  <div class="inner">
+    <h2>FULL HOUSE</h2>
+    <p id="fullhouseSub"></p>
+    <button class="navbtn active" id="fullhouseClose">Back to the card</button>
+  </div>
+</div>
+
+<script type="module">
+/* ================= CONFIG — the only hardcoded bit ================= */
+const CONFIG = {
+  SUPABASE_URL: "https://knwuzbtvatwcwxgjaeil.supabase.co",
+  SUPABASE_ANON_KEY: "sb_publishable_00xbWKZs7goNnwq308GRjQ_LIRec_qw",
+  BUCKET: "stag-evidence",
+  MAX_FILE_MB: 50,
+};
+/* =================================================================== */
+
+const DEMO_ACTIVITIES = [
+  "Down a pint in one", "Stranger buys the stag a drink", "Stag does karaoke",
+  "Photo with a hen party", "Stag wears the outfit for an hour", "Blag a free shot",
+  "Stag tells the proposal story to a stranger", "Group photo with a bouncer",
+  "Stag solo-dances for 30 seconds", "Convince a stranger it's his birthday",
+  "Stag orders a round in an accent", "Find a stranger with the stag's name",
+  "Toast standing on a chair", "Recreate the couple's first-date photo",
+  "Stag wins at pool or darts", "Everyone in for the 2am kebab",
+];
+const LINE_DEFS = [
+  ...[0,1,2,3].map(r => ({ key: "r" + r, label: "Row " + (r + 1), cells: [0,1,2,3].map(c => r * 4 + c) })),
+  ...[0,1,2,3].map(c => ({ key: "c" + c, label: "Column " + (c + 1), cells: [0,1,2,3].map(r => r * 4 + c) })),
+];
+
+const $ = (id) => document.getElementById(id);
+const LIVE = !!(CONFIG.SUPABASE_URL && CONFIG.SUPABASE_ANON_KEY);
+const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+let supabase = null;
+let cfg = {
+  stag_name: "The Stag", event_name: "Stag Do Bingo",
+  bg_path: null, activities: [...DEMO_ACTIVITIES],
+};
+let squares = Array.from({ length: 16 }, (_, i) => ({ id: i, done: false }));
+let bonuses = Object.fromEntries(LINE_DEFS.map(l => [l.key, { challenge: "", done: false }]));
+if (!LIVE) {
+  bonuses.r0.challenge = "Groom buys a round";
+  bonuses.c3.challenge = "Quickfire from the bride: where did you meet, first date, first kiss, where did he propose?";
+}
+let evidence = [];          // {square_id?, line_key?, media_type, url}
+let demoMedia = [];
+let celebrated = new Set();
+let fullHouseShown = false;
+let openSquare = null;
+let openBonus = null;
+let uploadTarget = null;    // {square_id} | {line_key}
+let adminPwd = null;
+let draft = null;           // admin edit state
+let demoBgUrl = null;
+
+function toast(msg, ms = 2600) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(t._h);
+  t._h = setTimeout(() => t.classList.remove("show"), ms);
+}
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+/* ---------- backend ---------- */
+async function initBackend() {
+  if (!LIVE) { $("demoBanner").hidden = false; return; }
+  try {
+    const mod = await import("https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm");
+    supabase = mod.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
+  } catch (e) {
+    console.error(e);
+    $("demoBanner").hidden = false;
+    toast("Couldn't reach the backend — demo mode");
+  }
+}
+function publicUrl(path) {
+  return supabase ? supabase.storage.from(CONFIG.BUCKET).getPublicUrl(path).data.publicUrl : null;
+}
+
+async function loadAll() {
+  if (!supabase) { applyCfg(); render(); return; }
+  const [c, sq, bo, ev] = await Promise.all([
+    supabase.from("config").select("*").eq("id", 1).single(),
+    supabase.from("squares").select("id, done"),
+    supabase.from("bonuses").select("line_key, challenge, done"),
+    supabase.from("evidence").select("id, square_id, line_key, path, media_type").order("created_at"),
+  ]);
+  if (c.error || sq.error || bo.error || ev.error) { toast("Couldn't refresh — check signal"); return; }
+  cfg = { ...cfg, ...c.data, activities: c.data.activities };
+  const doneMap = Object.fromEntries(sq.data.map(s => [s.id, s.done]));
+  squares.forEach(s => { s.done = !!doneMap[s.id]; });
+  bo.data.forEach(b => { bonuses[b.line_key] = { challenge: b.challenge || "", done: b.done }; });
+  evidence = ev.data.map(e => ({ ...e, url: publicUrl(e.path) }));
+  applyCfg();
+  render();
+}
+
+function applyCfg() {
+  $("stagName").textContent = cfg.stag_name;
+  $("eventName").textContent = cfg.event_name;
+  document.title = cfg.event_name + " — " + cfg.stag_name;
+  const bgUrl = demoBgUrl || (cfg.bg_path && supabase ? publicUrl(cfg.bg_path) : null);
+  if (bgUrl) {
+    document.body.style.backgroundImage =
+      `linear-gradient(rgba(10,19,34,.8), rgba(10,19,34,.92)), url("${bgUrl}")`;
+  } else {
+    document.body.style.backgroundImage = "";
+  }
+}
+
+async function setSquareDone(id, done) {
+  squares[id].done = done;
+  render();
+  if (supabase) {
+    const { error } = await supabase.from("squares").update({ done }).eq("id", id);
+    if (error) { toast("Save failed — try again"); squares[id].done = !done; render(); }
+  }
+}
+async function setBonusDone(key, done) {
+  bonuses[key].done = done;
+  render();
+  if (supabase) {
+    const { error } = await supabase.from("bonuses").update({ done }).eq("line_key", key);
+    if (error) { toast("Save failed — try again"); bonuses[key].done = !done; render(); }
+  }
+}
+
+function evidenceFor(target) {
+  const match = (e) => target.square_id !== undefined
+    ? e.square_id === target.square_id
+    : e.line_key === target.line_key;
+  return [...evidence.filter(match), ...demoMedia.filter(match)];
+}
+
+async function uploadFiles(target, files) {
+  for (const f of [...files]) {
+    if (f.size > CONFIG.MAX_FILE_MB * 1024 * 1024) {
+      toast(`"${f.name}" is over ${CONFIG.MAX_FILE_MB}MB — skipped`);
+      continue;
+    }
+    const isVideo = f.type.startsWith("video");
+    if (!supabase) {
+      demoMedia.push({ ...target, media_type: isVideo ? "video" : "image", url: URL.createObjectURL(f) });
+      continue;
+    }
+    const ext = (f.name.split(".").pop() || "bin").toLowerCase();
+    const folder = target.square_id !== undefined ? `sq${target.square_id}` : `bonus-${target.line_key}`;
+    const path = `${folder}/${Date.now()}-${Math.random().toString(36).slice(2, 7)}.${ext}`;
+    const up = await supabase.storage.from(CONFIG.BUCKET).upload(path, f, { contentType: f.type });
+    if (up.error) { toast("Upload failed — try again"); continue; }
+    const row = { path, media_type: isVideo ? "video" : "image", square_id: target.square_id ?? null, line_key: target.line_key ?? null };
+    const ins = await supabase.from("evidence").insert(row);
+    if (ins.error) { toast("Upload saved but not logged — refresh"); }
+  }
+  if (supabase) await loadAll();
+  // evidence auto-ticks its target
+  if (target.square_id !== undefined && !squares[target.square_id].done) await setSquareDone(target.square_id, true);
+  if (target.line_key !== undefined && !bonuses[target.line_key].done) await setBonusDone(target.line_key, true);
+  renderSquareSheet(); renderBonusSheet(); render();
+  toast("Evidence in. No arguing with that.");
+}
+
+/* ---------- card rendering ---------- */
+function render() {
+  const board = $("board");
+  board.innerHTML = "";
+  squares.forEach((s, i) => {
+    const cell = document.createElement("button");
+    cell.className = "cell" + (s.done ? " done" : "");
+    const title = cfg.activities[i] || "—";
+    cell.setAttribute("aria-label", title + (s.done ? " — done" : ""));
+    const label = document.createElement("span");
+    label.className = "label";
+    label.textContent = title;
+    cell.appendChild(label);
+    const n = evidenceFor({ square_id: s.id }).length;
+    if (n) {
+      const cc = document.createElement("span");
+      cc.className = "clipcount";
+      cc.textContent = "📎" + n;
+      cell.appendChild(cc);
+    }
+    if (s.done) {
+      const dab = document.createElement("span");
+      dab.className = "dab";
+      dab.style.setProperty("--rot", (((s.id * 37) % 14) - 7) + "deg");
+      cell.appendChild(dab);
+    }
+    cell.addEventListener("click", () => openSquareSheet(s.id));
+    board.appendChild(cell);
+  });
+
+  const doneCount = squares.filter(s => s.done).length;
+  const doneLines = LINE_DEFS.filter(l => l.cells.every(i => squares[i].done));
+  $("statSquares").textContent = `${doneCount}/16`;
+  $("statLines").textContent = `${doneLines.length}/8`;
+
+  const pending = doneLines.filter(l => bonuses[l.key].challenge && !bonuses[l.key].done);
+  $("bonusChip").classList.toggle("show", pending.length > 0);
+  $("bonusChip").onclick = () => pending.length && openBonusSheet(pending[0].key);
+
+  renderGallery();
+  checkCelebrations(doneLines, doneCount);
+}
+
+function renderGallery() {
+  const g = $("gallery");
+  g.innerHTML = "";
+  let any = false;
+  const addSection = (heading, done, media) => {
+    if (!media.length) return;
+    any = true;
+    const wrap = document.createElement("div");
+    wrap.className = "gal-square";
+    const h = document.createElement("h3");
+    h.innerHTML = (done ? "<span>✔</span> " : "") + esc(heading);
+    wrap.appendChild(h);
+    const grid = document.createElement("div");
+    grid.className = "gal-media";
+    media.forEach(m => {
+      const tile = document.createElement("div");
+      tile.className = "gal-tile";
+      if (m.media_type === "video") {
+        const v = document.createElement("video");
+        v.src = m.url; v.controls = true; v.playsInline = true; v.preload = "metadata";
+        tile.appendChild(v);
+      } else {
+        const img = document.createElement("img");
+        img.src = m.url; img.loading = "lazy"; img.alt = heading;
+        tile.appendChild(img);
+      }
+      if (adminPwd && m.id) {   // delete only shows when Inner Circle is unlocked
+        const del = document.createElement("button");
+        del.className = "gal-del";
+        del.innerHTML = "&#128465;";
+        del.title = "Delete this evidence";
+        del.addEventListener("click", (e) => { e.stopPropagation(); deleteEvidence(m); });
+        tile.appendChild(del);
+      }
+      grid.appendChild(tile);
+    });
+    wrap.appendChild(grid);
+    g.appendChild(wrap);
+  };
+  squares.forEach((s, i) => addSection(cfg.activities[i] || "—", s.done, evidenceFor({ square_id: s.id })));
+  LINE_DEFS.forEach(l => {
+    const b = bonuses[l.key];
+    if (b.challenge) addSection("Bonus — " + b.challenge, b.done, evidenceFor({ line_key: l.key }));
+  });
+  if (!any) g.innerHTML = `<p class="gal-empty">No evidence yet. Get dabbing.</p>`;
+}
+
+async function deleteEvidence(m) {
+  if (!adminPwd) { toast("Unlock Inner Circle to delete"); return; }
+  if (!confirm("Delete this evidence for good?")) return;
+  if (!supabase) {
+    demoMedia = demoMedia.filter(x => x !== m);
+    render();
+    toast("Deleted (demo)");
+    return;
+  }
+  const { data: path, error } = await supabase.rpc("delete_evidence", { pwd: adminPwd, ev_id: m.id });
+  if (error || !path) { toast("Delete failed — are you still unlocked?"); return; }
+  await supabase.storage.from(CONFIG.BUCKET).remove([path]);  // remove the actual file
+  await loadAll();
+  toast("Evidence deleted");
+}
+
+/* ---------- hangover tab ---------- */
+const MONTAGE_PATH = "montage/stag-montage.mp4";
+
+async function montageUrl() {
+  if (!supabase) return null;
+  // list the montage folder to see if the file exists yet
+  const { data, error } = await supabase.storage.from(CONFIG.BUCKET).list("montage");
+  if (error || !data || !data.some(f => f.name === "stag-montage.mp4")) return null;
+  const base = publicUrl(MONTAGE_PATH);
+  return base + "?t=" + Date.now();  // cache-bust so a re-run shows the new one
+}
+
+async function renderHangover() {
+  const h = $("hangover");
+  h.innerHTML = `<p class="gal-empty">Loading…</p>`;
+
+  const allMedia = [];
+  squares.forEach((s, i) => evidenceFor({ square_id: s.id }).forEach(m => allMedia.push({ ...m, label: cfg.activities[i] || "—" })));
+  LINE_DEFS.forEach(l => { const b = bonuses[l.key]; if (b.challenge) evidenceFor({ line_key: l.key }).forEach(m => allMedia.push({ ...m, label: "Bonus — " + b.challenge })); });
+
+  const mUrl = await montageUrl();
+
+  let html = "";
+
+  // montage block
+  html += `<div class="hang-block">`;
+  html += `<h3 class="hang-h">The montage</h3>`;
+  if (mUrl) {
+    html += `
+      <video class="hang-video" src="${mUrl}" controls playsinline preload="metadata"></video>
+      <a class="bigbtn dark" href="${mUrl}" download="stag-montage.mp4" style="text-decoration:none;text-align:center;margin-top:10px">Download the montage</a>`;
+    if (adminPwd) html += `<button class="bigbtn outline" id="btnDelMontage" style="margin-top:8px">Delete montage</button>`;
+  } else {
+    html += `<p class="hang-empty">Not built yet. Once the montage has been generated the morning after, it'll appear here to watch and download.</p>`;
+  }
+  html += `</div>`;
+
+  // evidence download block
+  html += `<div class="hang-block"><h3 class="hang-h">Download the evidence</h3>`;
+  if (!allMedia.length) {
+    html += `<p class="hang-empty">No evidence uploaded yet.</p>`;
+  } else {
+    html += `<p class="hint" style="color:rgba(244,246,249,.75);margin:0 0 12px">${allMedia.length} item${allMedia.length > 1 ? "s" : ""}. Tap any one to save it — on most phones, long-press then "Download" also works.</p>`;
+    html += `<div class="hang-grid">`;
+    allMedia.forEach((m, i) => {
+      const dlName = `stag-${String(i + 1).padStart(2, "0")}.${(m.url.split(".").pop() || "jpg").split("?")[0]}`;
+      const thumb = m.media_type === "video"
+        ? `<div class="hang-vid">🎬</div>`
+        : `<img src="${m.url}" loading="lazy" alt="">`;
+      html += `<a class="hang-tile" href="${m.url}" download="${dlName}" target="_blank" rel="noopener">${thumb}<span class="hang-dl">⬇</span></a>`;
+    });
+    html += `</div>`;
+  }
+  html += `</div>`;
+
+  h.innerHTML = html;
+
+  const delBtn = $("btnDelMontage");
+  if (delBtn) delBtn.addEventListener("click", deleteMontage);
+}
+
+async function deleteMontage() {
+  if (!adminPwd) { toast("Unlock Inner Circle to delete"); return; }
+  if (!confirm("Delete the montage for good? (You can always re-run the builder.)")) return;
+  if (!supabase) { toast("Demo mode — no montage stored"); return; }
+  const { data, error } = await supabase.rpc("delete_montage", { pwd: adminPwd });
+  if (error || data !== true) { toast("Delete failed — are you still unlocked?"); return; }
+  toast("Montage deleted");
+  renderHangover();
+}
+
+/* ---------- celebrations & bonus popups ---------- */
+const CONFETTI_COLORS = ["#C7CFDA", "#FFFFFF", "#4A6FA5"];
+/* built-in confetti — no external library, works everywhere */
+const Confetti = (() => {
+  let canvas = null, ctx = null, parts = [], raf = null;
+  function ensure() {
+    if (canvas) return;
+    canvas = document.createElement("canvas");
+    Object.assign(canvas.style, { position: "fixed", inset: "0", pointerEvents: "none", zIndex: 50 });
+    document.body.appendChild(canvas);
+    ctx = canvas.getContext("2d");
+    const resize = () => { canvas.width = innerWidth; canvas.height = innerHeight; };
+    resize();
+    addEventListener("resize", resize);
+  }
+  function burst({ particleCount = 80, spread = 70, origin = { x: .5, y: .7 }, colors = ["#fff"] } = {}) {
+    ensure();
+    const cx = origin.x * canvas.width, cy = origin.y * canvas.height;
+    for (let i = 0; i < particleCount; i++) {
+      const angle = -Math.PI / 2 + (Math.random() - .5) * (spread * Math.PI / 180);
+      const speed = 7 + Math.random() * 9;
+      parts.push({
+        x: cx, y: cy,
+        vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
+        w: 6 + Math.random() * 5, h: 4 + Math.random() * 4,
+        rot: Math.random() * Math.PI, vr: (Math.random() - .5) * .3,
+        color: colors[(Math.random() * colors.length) | 0],
+        life: 90 + Math.random() * 50,
+      });
+    }
+    if (!raf) loop();
+  }
+  function loop() {
+    raf = requestAnimationFrame(loop);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    parts = parts.filter(p => p.life > 0 && p.y < canvas.height + 20);
+    if (!parts.length) { cancelAnimationFrame(raf); raf = null; return; }
+    for (const p of parts) {
+      p.vy += 0.25;
+      p.vx *= 0.99; p.vy *= 0.995;
+      p.x += p.vx; p.y += p.vy;
+      p.rot += p.vr;
+      p.life--;
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(p.rot);
+      ctx.globalAlpha = Math.min(1, p.life / 40);
+      ctx.fillStyle = p.color;
+      ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+      ctx.restore();
+    }
+  }
+  return { burst };
+})();
+function fireConfetti(opts) {
+  if (reducedMotion) return;
+  Confetti.burst(opts);
+}
+function checkCelebrations(doneLines, doneCount) {
+  doneLines.forEach(l => {
+    if (celebrated.has(l.key)) return;
+    celebrated.add(l.key);
+    fireConfetti({ particleCount: 90, spread: 70, origin: { x: 0.1, y: 0.7 }, colors: CONFETTI_COLORS });
+    fireConfetti({ particleCount: 90, spread: 70, origin: { x: 0.9, y: 0.7 }, colors: CONFETTI_COLORS });
+    const b = bonuses[l.key];
+    if (b.challenge && !b.done) {
+      setTimeout(() => openBonusSheet(l.key), 500);
+    } else {
+      toast("LINE! " + l.label + " complete");
+    }
+  });
+  [...celebrated].forEach(k => {
+    const line = LINE_DEFS.find(l => l.key === k);
+    if (line && !line.cells.every(i => squares[i].done)) celebrated.delete(k);
+  });
+  if (doneCount === 16 && !fullHouseShown) {
+    fullHouseShown = true;
+    $("fullhouseSub").textContent = `${cfg.stag_name} did the lot. Evidence or it didn't happen — oh wait, you've got the evidence.`;
+    $("fullhouse").classList.add("show");
+    fireConfetti({ particleCount: 200, spread: 120, origin: { y: 0.6 }, colors: CONFETTI_COLORS });
+    if (!reducedMotion) {
+      let bursts = 0;
+      const iv = setInterval(() => {
+        fireConfetti({ particleCount: 60, spread: 100, origin: { x: Math.random(), y: Math.random() * 0.5 }, colors: CONFETTI_COLORS });
+        if (++bursts > 5) clearInterval(iv);
+      }, 450);
+    }
+  }
+  if (doneCount < 16) fullHouseShown = false;
+}
+$("fullhouseClose").addEventListener("click", () => $("fullhouse").classList.remove("show"));
+
+/* ---------- square sheet ---------- */
+function closeSheets() {
+  openSquare = null; openBonus = null;
+  $("overlay").classList.remove("open");
+  $("squareSheet").classList.remove("open");
+  $("bonusSheet").classList.remove("open");
+}
+$("overlay").addEventListener("click", closeSheets);
+
+function openSquareSheet(id) {
+  closeSheets();
+  openSquare = id;
+  renderSquareSheet();
+  $("overlay").classList.add("open");
+  $("squareSheet").classList.add("open");
+}
+function renderSquareSheet() {
+  if (openSquare === null) return;
+  const s = squares[openSquare];
+  $("sqEyebrow").textContent = `Square ${openSquare + 1} of 16`;
+  $("sqTitle").textContent = cfg.activities[openSquare] || "—";
+  const btn = $("btnSqDone");
+  btn.textContent = s.done ? "Un-dab it" : "Dab it — done!";
+  btn.className = "bigbtn " + (s.done ? "outline" : "primary");
+  renderThumbs($("sqThumbs"), evidenceFor({ square_id: openSquare }));
+}
+$("btnSqDone").addEventListener("click", async () => {
+  const s = squares[openSquare];
+  await setSquareDone(s.id, !s.done);
+  renderSquareSheet();
+});
+$("btnSqUpload").addEventListener("click", () => {
+  uploadTarget = { square_id: openSquare };
+  $("fileInput").click();
+});
+
+/* ---------- bonus sheet ---------- */
+function openBonusSheet(key) {
+  closeSheets();
+  openBonus = key;
+  renderBonusSheet();
+  $("overlay").classList.add("open");
+  $("bonusSheet").classList.add("open");
+}
+function renderBonusSheet() {
+  if (openBonus === null) return;
+  const line = LINE_DEFS.find(l => l.key === openBonus);
+  const b = bonuses[openBonus];
+  $("boEyebrow").textContent = `⚡ Bonus round — ${line.label} complete`;
+  $("boTitle").textContent = b.challenge;
+  const btn = $("btnBoDone");
+  btn.textContent = b.done ? "Un-tick it" : "Done — tick it off";
+  btn.className = "bigbtn " + (b.done ? "outline" : "primary");
+  renderThumbs($("boThumbs"), evidenceFor({ line_key: openBonus }));
+}
+$("btnBoDone").addEventListener("click", async () => {
+  await setBonusDone(openBonus, !bonuses[openBonus].done);
+  renderBonusSheet();
+});
+$("btnBoUpload").addEventListener("click", () => {
+  uploadTarget = { line_key: openBonus };
+  $("fileInput").click();
+});
+$("btnBoLater").addEventListener("click", closeSheets);
+
+function renderThumbs(el, media) {
+  el.innerHTML = "";
+  media.forEach(m => {
+    if (m.media_type === "video") {
+      const t = document.createElement("div");
+      t.className = "vidtile";
+      t.textContent = "🎬";
+      el.appendChild(t);
+    } else {
+      const img = document.createElement("img");
+      img.src = m.url;
+      el.appendChild(img);
+    }
+  });
+}
+
+/* ---------- shared file input ---------- */
+$("fileInput").addEventListener("change", async (e) => {
+  if (!e.target.files.length || !uploadTarget) return;
+  const btn = uploadTarget.square_id !== undefined ? $("btnSqUpload") : $("btnBoUpload");
+  const oldLabel = btn.textContent;
+  btn.innerHTML = `<span class="spinner"></span>Uploading…`;
+  btn.disabled = true;
+  await uploadFiles(uploadTarget, e.target.files);
+  btn.textContent = oldLabel;
+  btn.disabled = false;
+  e.target.value = "";
+  uploadTarget = null;
+});
+
+/* ---------- inner circle (admin) ---------- */
+async function tryUnlock(pwd) {
+  if (!supabase) return pwd === "demo";
+  const { data, error } = await supabase.rpc("check_admin", { pwd });
+  if (error) { toast("Couldn't check password — try again"); return false; }
+  return data === true;
+}
+function startDraft() {
+  draft = {
+    stag_name: cfg.stag_name,
+    event_name: cfg.event_name,
+    bg_path: cfg.bg_path,
+    activities: [...cfg.activities],
+    bonuses: Object.fromEntries(LINE_DEFS.map(l => [l.key, bonuses[l.key].challenge])),
+  };
+}
+function renderAdmin() {
+  const a = $("admin");
+  if (!adminPwd) {
+    a.innerHTML = `
+      <div class="panel">
+        <h3>Inner Circle</h3>
+        <label for="pwdInput">Password</label>
+        <input type="password" id="pwdInput" autocomplete="off" enterkeyhint="go">
+        <p class="hint">Setup access for the organisers. Everyone else just plays the card.</p>
+      </div>
+      <button class="bigbtn primary" id="btnUnlock">Unlock</button>`;
+    const go = async () => {
+      const pwd = $("pwdInput").value;
+      $("btnUnlock").innerHTML = `<span class="spinner"></span>Checking…`;
+      if (await tryUnlock(pwd)) {
+        adminPwd = pwd;
+        startDraft();
+        renderAdmin();
+        renderGallery();   // show delete buttons right away
+        toast("Welcome to the Inner Circle");
+      } else {
+        renderAdmin();
+        toast("Wrong password");
+      }
+    };
+    $("btnUnlock").addEventListener("click", go);
+    $("pwdInput").addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
+    return;
+  }
+
+  const actRows = draft.activities.map((t, i) => `
+    <div class="actrow">
+      <span class="pos">${i + 1}</span>
+      <input type="text" data-act="${i}" value="${esc(t)}" maxlength="80">
+      <button class="arrow" data-up="${i}" ${i === 0 ? "disabled" : ""}>&#8593;</button>
+      <button class="arrow" data-down="${i}" ${i === 15 ? "disabled" : ""}>&#8595;</button>
+    </div>`).join("");
+
+  const bonusRows = LINE_DEFS.map(l => `
+    <div class="bonusrow">
+      <p class="linelabel">${l.label}</p>
+      <input type="text" data-bonus="${l.key}" value="${esc(draft.bonuses[l.key])}"
+        placeholder="Leave blank for just confetti" maxlength="200">
+    </div>`).join("");
+
+  a.innerHTML = `
+    <div class="panel">
+      <h3>The basics</h3>
+      <label for="adEvent">Event title</label>
+      <input type="text" id="adEvent" value="${esc(draft.event_name)}" maxlength="40">
+      <label for="adStag">Stag's name / strapline</label>
+      <input type="text" id="adStag" value="${esc(draft.stag_name)}" maxlength="40">
+      <label>Background photo of the stag</label>
+      <button class="bigbtn quiet" id="btnPhoto" style="margin:4px 0 0">Choose photo</button>
+      <img class="photoPreview" id="photoPreview" alt="Background preview">
+      <p class="hint">Shown behind the whole page with a navy tint so the card stays readable.</p>
+    </div>
+    <div class="panel">
+      <h3>The 16 challenges</h3>
+      <p class="hint" style="margin:0 0 10px">Order here is the card order — position 1 is top-left, 16 is bottom-right.</p>
+      ${actRows}
+    </div>
+    <div class="panel">
+      <h3>Bonus rounds</h3>
+      <p class="hint" style="margin:0 0 10px">When that row or column is completed, this challenge pops up for the group. It gets ticked off with optional evidence.</p>
+      ${bonusRows}
+    </div>
+    <div class="panel">
+      <h3>Inner Circle password</h3>
+      <label for="adNewPwd">New password</label>
+      <input type="password" id="adNewPwd" autocomplete="new-password" maxlength="60">
+      <button class="bigbtn quiet" id="btnPwd" style="margin:10px 0 0">Change password</button>
+      <p class="hint">Ships as "thestag" — change it before you share the page link.</p>
+    </div>
+    <button class="bigbtn primary" id="btnSave">Save setup</button>
+    <button class="bigbtn quiet" id="btnLock">Lock Inner Circle</button>`;
+
+  const preview = $("photoPreview");
+  const previewUrl = demoBgUrl || (draft.bg_path && supabase ? publicUrl(draft.bg_path) : null);
+  if (previewUrl) { preview.src = previewUrl; preview.classList.add("show"); }
+
+  a.querySelectorAll("[data-act]").forEach(inp =>
+    inp.addEventListener("input", () => { draft.activities[+inp.dataset.act] = inp.value; }));
+  a.querySelectorAll("[data-bonus]").forEach(inp =>
+    inp.addEventListener("input", () => { draft.bonuses[inp.dataset.bonus] = inp.value; }));
+  $("adEvent").addEventListener("input", (e) => { draft.event_name = e.target.value; });
+  $("adStag").addEventListener("input", (e) => { draft.stag_name = e.target.value; });
+  a.querySelectorAll("[data-up]").forEach(btn => btn.addEventListener("click", () => {
+    const i = +btn.dataset.up;
+    [draft.activities[i - 1], draft.activities[i]] = [draft.activities[i], draft.activities[i - 1]];
+    renderAdmin();
+  }));
+  a.querySelectorAll("[data-down]").forEach(btn => btn.addEventListener("click", () => {
+    const i = +btn.dataset.down;
+    [draft.activities[i], draft.activities[i + 1]] = [draft.activities[i + 1], draft.activities[i]];
+    renderAdmin();
+  }));
+  $("btnPhoto").addEventListener("click", () => $("photoInput").click());
+  $("btnPwd").addEventListener("click", async () => {
+    const np = $("adNewPwd").value.trim();
+    if (np.length < 4) { toast("Password needs at least 4 characters"); return; }
+    if (!supabase) { toast("Demo mode — password stays 'demo'"); return; }
+    const { data, error } = await supabase.rpc("change_password", { pwd: adminPwd, new_pwd: np });
+    if (error || data !== true) { toast("Couldn't change password — try again"); return; }
+    adminPwd = np;
+    $("adNewPwd").value = "";
+    toast("Password changed");
+  });
+  $("btnSave").addEventListener("click", saveSetup);
+  $("btnLock").addEventListener("click", () => { adminPwd = null; draft = null; renderAdmin(); renderGallery(); });
+}
+
+$("photoInput").addEventListener("change", async (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  if (f.size > CONFIG.MAX_FILE_MB * 1024 * 1024) { toast(`Photo is over ${CONFIG.MAX_FILE_MB}MB`); return; }
+  if (!supabase) {
+    demoBgUrl = URL.createObjectURL(f);
+    renderAdmin();
+    toast("Photo set (demo) — hit Save setup");
+  } else {
+    const ext = (f.name.split(".").pop() || "jpg").toLowerCase();
+    const path = `branding/bg-${Date.now()}.${ext}`;
+    const up = await supabase.storage.from(CONFIG.BUCKET).upload(path, f, { contentType: f.type });
+    if (up.error) { toast("Photo upload failed — try again"); return; }
+    draft.bg_path = path;
+    renderAdmin();
+    toast("Photo uploaded — hit Save setup");
+  }
+  e.target.value = "";
+});
+
+async function saveSetup() {
+  const acts = draft.activities.map(t => t.trim());
+  if (acts.some(t => !t)) { toast("Every square needs a challenge"); return; }
+  if (!supabase) {
+    cfg = { ...cfg, stag_name: draft.stag_name.trim() || "The Stag", event_name: draft.event_name.trim() || "Stag Do Bingo", activities: acts };
+    LINE_DEFS.forEach(l => { bonuses[l.key].challenge = draft.bonuses[l.key].trim(); });
+    applyCfg(); render();
+    toast("Saved (demo only)");
+    return;
+  }
+  const btn = $("btnSave");
+  btn.innerHTML = `<span class="spinner"></span>Saving…`;
+  const { data, error } = await supabase.rpc("save_setup", {
+    pwd: adminPwd,
+    p_stag: draft.stag_name.trim() || "The Stag",
+    p_event: draft.event_name.trim() || "Stag Do Bingo",
+    p_activities: acts,
+    p_bg: draft.bg_path,
+    p_bonuses: Object.fromEntries(LINE_DEFS.map(l => [l.key, draft.bonuses[l.key].trim()])),
+  });
+  btn.textContent = "Save setup";
+  if (error || data !== true) { toast("Save failed — check password and signal"); return; }
+  await loadAll();
+  startDraft();
+  toast("Saved. Card updated for everyone.");
+}
+
+/* ---------- nav ---------- */
+function showView(view) {
+  $("board").hidden = view !== "card";
+  $("gallery").hidden = view !== "gallery";
+  $("hangover").hidden = view !== "hangover";
+  $("admin").hidden = view !== "admin";
+  $("navCard").classList.toggle("active", view === "card");
+  $("navGallery").classList.toggle("active", view === "gallery");
+  $("navHangover").classList.toggle("active", view === "hangover");
+  $("navAdmin").classList.toggle("active", view === "admin");
+  if (view === "admin") renderAdmin();
+  if (view === "hangover") renderHangover();
+}
+$("navCard").addEventListener("click", () => showView("card"));
+$("navGallery").addEventListener("click", () => showView("gallery"));
+$("navHangover").addEventListener("click", () => showView("hangover"));
+$("navAdmin").addEventListener("click", () => showView("admin"));
+$("navRefresh").addEventListener("click", async () => { await loadAll(); toast("Refreshed"); });
+
+/* ---------- boot ---------- */
+applyCfg();
+render();
+await initBackend();
+await loadAll();
+document.addEventListener("visibilitychange", () => { if (!document.hidden) loadAll(); });
+setInterval(() => { if ($("admin").hidden) loadAll(); }, 30000);
+</script>
+</body>
+</html>
