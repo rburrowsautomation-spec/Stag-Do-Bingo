@@ -96,18 +96,38 @@ def probe_duration(src):
 
 
 def caption_card(text, out, seconds=2.5):
-    """A dark card with the challenge text, matched to the video size."""
-    # wrap tight enough to fit the portrait width with margins
+    """A dark navy card with centred challenge text and scattered confetti."""
     wrapped = "\n".join(textwrap.wrap(text, width=16)) or " "
     tf = WORK / "cap.txt"
     tf.write_text(wrapped, encoding="utf-8")
+
+    # scatter confetti: small coloured rectangles at pseudo-random spots
+    import random
+    rnd = random.Random(hash(text) & 0xFFFF)   # same text -> same layout
+    colours = ["0xC7CFDA", "0xFFFFFF", "0x4A6FA5", "0x8FA8CC"]
+    draws = []
+    for _ in range(28):
+        x = rnd.randint(20, TARGET_W - 40)
+        y = rnd.randint(20, TARGET_H - 40)
+        w = rnd.randint(10, 26)
+        h = rnd.randint(6, 14)
+        c = rnd.choice(colours)
+        # keep confetti out of the central text band so it stays readable
+        if TARGET_H * 0.38 < y < TARGET_H * 0.62:
+            y = y - int(TARGET_H * 0.30) if y < TARGET_H * 0.5 else y + int(TARGET_H * 0.30)
+        draws.append(f"drawbox=x={x}:y={y}:w={w}:h={h}:color={c}@0.9:t=fill")
+
+    confetti = ",".join(draws)
+    textfilter = (
+        f"drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:"
+        f"textfile={tf}:fontcolor=0xF4F6F9:fontsize=48:"
+        f"x=(w-text_w)/2:y=(h-text_h)/2:line_spacing=16:text_align=center"
+    )
+
     run_capture([
         "ffmpeg", "-y",
         "-f", "lavfi", "-i", f"color=c=0x121E33:s={TARGET_W}x{TARGET_H}:d={seconds}:r={FPS}",
-        "-vf",
-        (f"drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:"
-         f"textfile={tf}:fontcolor=0xF4F6F9:fontsize=48:"
-         f"x=(w-text_w)/2:y=(h-text_h)/2:line_spacing=16"),
+        "-vf", f"{confetti},{textfilter}",
         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-t", str(seconds),
         str(out),
     ])
@@ -162,7 +182,7 @@ def normalise_video_safe(src, out, clip_len):
 # ---------- main ----------
 def main():
     CLIP_MIN, CLIP_MAX = 5, 10   # seconds per video clip
-    PHOTO_SECS = 3               # seconds per photo
+    PHOTO_SECS = 2               # seconds per photo
     CARD_SECS = 2.5              # seconds per caption card
 
     print("Loading config + evidence from Supabase…")
@@ -247,4 +267,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-          
+  
